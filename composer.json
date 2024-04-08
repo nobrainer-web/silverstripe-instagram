@@ -1,5 +1,5 @@
 {
-	"name": "bramdeleeuw/silverstripe-instagram",
+	"name": "nobrainer-web/silverstripe-instagram",
 	"description": "Link your instagram account to you SilverStripe site and query the instagram api",
 	"type": "silverstripe-vendormodule",
 	"keywords": ["silverstripe", "social media", "instagram", "api", "media"],

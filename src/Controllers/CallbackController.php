@@ -65,13 +65,13 @@ class CallbackController extends Controller
             return Security::permissionFailure($this);
         }
         if (!SecurityToken::inst()->checkRequest($request)) {
-            return $this->redirectWithMessage('Invalid security token, please try again');
+            return $this->redirectWithMessage('token');
         }
 
         /** @var Member|null $member */
         $member = Member::get()->byID((int) $request->param('ID'));
         if (!$member || !($member->ID === $current->ID || Permission::check('CMS_ACCESS_SecurityAdmin'))) {
-            return $this->redirectWithMessage('Not allowed to revoke this account');
+            return $this->redirectWithMessage('notallowed');
         }
 
         $member->update([
@@ -82,7 +82,7 @@ class CallbackController extends Controller
         ]);
         $member->write();
 
-        return $this->redirectWithMessage('Instagram access revoked', self::MESSAGE_SUCCESS, $member->ID);
+        return $this->redirectWithMessage('revoked', self::MESSAGE_SUCCESS, $member->ID);
     }
 
     /**
@@ -97,23 +97,29 @@ class CallbackController extends Controller
 
         $request = $this->getRequest();
         if ($request->getVar('error')) {
-            return $this->redirectWithMessage(mb_substr((string) ($request->getVar('error_description') ?: $request->getVar('error')), 0, 200));
+            // Instagram's own error text is logged, not shown (it arrives in the URL and could be crafted)
+            ImportMediaTasks::log('Instagram authorization error: ' . InstagramClient::redact(mb_substr((string) ($request->getVar('error_description') ?: $request->getVar('error')), 0, 200)), 'warning');
+            return $this->redirectWithMessage('denied');
         }
         // state was set to the CMS security token when building the authorize URL
+        // one-time OAuth state from the session (InstagramClient::stateToken), cleared after use
+        $session = $request->getSession();
+        $expected = (string) $session->get(InstagramClient::STATE_SESSION_KEY);
+        $session->clear(InstagramClient::STATE_SESSION_KEY);
         $state = (string) $request->getVar('state');
-        if ($state === '' || !hash_equals((string) SecurityToken::inst()->getValue(), $state)) {
-            return $this->redirectWithMessage('Invalid state, please try again');
+        if ($expected === '' || $state === '' || !hash_equals($expected, $state)) {
+            return $this->redirectWithMessage('state');
         }
         $code = $request->getVar('code');
         if (!$code) {
-            return $this->redirectWithMessage('Did not receive a valid auth token');
+            return $this->redirectWithMessage('nocode');
         }
 
         try {
             // short lived token from the authorization code
             $response = json_decode((new InstagramAuthClient())->getAccessToken($code)->getBody()->getContents());
             if (empty($response->access_token) || empty($response->user_id)) {
-                return $this->redirectWithMessage('Could not receive token from auth response');
+                return $this->redirectWithMessage('notoken');
             }
             $userID = $response->user_id;
 
@@ -121,12 +127,12 @@ class CallbackController extends Controller
             $response = json_decode((new InstagramClient($response->access_token))
                 ->getLongLivedAccessToken()->getBody()->getContents());
             if (empty($response->access_token) || empty($response->expires_in)) {
-                return $this->redirectWithMessage('Could not read long lived access token from response');
+                return $this->redirectWithMessage('notoken');
             }
         } catch (Exception $e) {
             // the message can contain the request URL: log it without secrets, show a generic message
             ImportMediaTasks::log('Instagram authentication failed: ' . InstagramClient::redact($e->getMessage()), 'error');
-            return $this->redirectWithMessage('Instagram authentication failed, see the error log');
+            return $this->redirectWithMessage('failed');
         }
 
         $member->update([
@@ -137,9 +143,9 @@ class CallbackController extends Controller
 
         try {
             $member->write();
-            return $this->redirectWithMessage('Authenticated Instagram', self::MESSAGE_SUCCESS);
+            return $this->redirectWithMessage('authenticated', self::MESSAGE_SUCCESS);
         } catch (Exception $e) {
-            return $this->redirectWithMessage('Failed to save member');
+            return $this->redirectWithMessage('savefailed');
         }
     }
 
@@ -151,11 +157,12 @@ class CallbackController extends Controller
     /**
      * Redirect to the member's edit form in the security admin, with a message
      */
-    protected function redirectWithMessage($message, $success = self::MESSAGE_ERROR, ?int $memberID = null): HTTPResponse
+    protected function redirectWithMessage(string $code, $success = self::MESSAGE_ERROR, ?int $memberID = null): HTTPResponse
     {
+        // only a message code travels in the URL; the text is looked up in MemberExtension::messages()
         $current = Security::getCurrentUser();
         $memberID = $memberID ?: ($current ? $current->ID : 0);
-        $message = urlencode($message);
-        return $this->redirect(Director::absoluteURL("/admin/security/users/EditForm/field/users/item/{$memberID}/edit?instagram_success=$success&instagram_message=$message"));
+        $code = urlencode($code);
+        return $this->redirect(Director::absoluteURL("/admin/security/users/EditForm/field/users/item/{$memberID}/edit?instagram_msg=$code"));
     }
 }

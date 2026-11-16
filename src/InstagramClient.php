@@ -15,7 +15,6 @@ use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
 use SilverStripe\ORM\DataList;
 use SilverStripe\Security\Member;
-use SilverStripe\Security\SecurityToken;
 use SilverStripe\SiteConfig\SiteConfig;
 
 /**
@@ -30,6 +29,8 @@ class InstagramClient
     const API_URL = 'https://graph.instagram.com/';
 
     const AUTHORIZE_URL = 'https://www.instagram.com/oauth/authorize';
+
+    const STATE_SESSION_KEY = 'InstagramOAuthState';
 
     private static $api_version = 'v20.0';
 
@@ -221,16 +222,23 @@ class InstagramClient
     }
 
     /**
-     * The OAuth state: the session's security token. Outside a web request (CLI, tests) there is no session;
+     * The OAuth state: a random value kept in the session until the callback. Outside a web request (CLI, tests) there is no session;
      * the URL is then built without a state, and CallbackController::authenticate() rejects it.
      */
     protected static function stateToken(): string
     {
+        // a separate one-time value (not the session's CSRF token: the state comes back in the URL and ends up in logs)
         try {
-            return (string) SecurityToken::inst()->getValue();
-        } catch (\Exception $e) {
+            $session = Controller::curr()->getRequest()->getSession();
+        } catch (\Throwable $e) {
             return '';
         }
+        $state = $session->get(self::STATE_SESSION_KEY);
+        if (!$state) {
+            $state = bin2hex(random_bytes(16));
+            $session->set(self::STATE_SESSION_KEY, $state);
+        }
+        return $state;
     }
 
     /**

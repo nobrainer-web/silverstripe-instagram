@@ -52,9 +52,12 @@ class MemberExtension extends Extension
 
         // Render user feedback
         if (($controller = Controller::curr()) && $request = $controller->getRequest()) {
-            if (($success = $request->getVar('instagram_success')) !== null && $message = $request->getVar('instagram_message')) {
+            $messages = self::messages();
+            $code = (string) $request->getVar('instagram_msg');
+            if (isset($messages[$code])) {
+                [$text, $success] = $messages[$code];
                 $messageClass = $success ? 'good' : 'bad';
-                $message = Convert::raw2xml(urldecode($message));
+                $message = Convert::raw2xml($text);
                 $fields->addFieldsToTab('Root.Instagram', [
                     LiteralField::create('InstagramMessage', "<p class='message $messageClass'>$message</p>")
                 ]);
@@ -78,6 +81,27 @@ class MemberExtension extends Extension
                 RevokeButton::create('InstagramRevokeButton', $this->getOwner()->ID)
             ));
         }
+    }
+
+    /**
+     * Messages after connecting/revoking: the URL carries only the code, so nobody can put their own text in the CMS
+     *
+     * @return array code => [text, success]
+     */
+    public static function messages(): array
+    {
+        return [
+            'authenticated' => [_t(__CLASS__ . '.MsgAuthenticated', 'Instagram connected'), true],
+            'revoked' => [_t(__CLASS__ . '.MsgRevoked', 'Instagram access revoked'), true],
+            'token' => [_t(__CLASS__ . '.MsgToken', 'Invalid security token, please try again'), false],
+            'notallowed' => [_t(__CLASS__ . '.MsgNotAllowed', 'Not allowed to revoke this account'), false],
+            'denied' => [_t(__CLASS__ . '.MsgDenied', 'Instagram did not grant access (details in the error log)'), false],
+            'state' => [_t(__CLASS__ . '.MsgState', 'The request expired or was not started here, please try again'), false],
+            'nocode' => [_t(__CLASS__ . '.MsgNoCode', 'Did not receive a valid auth code'), false],
+            'notoken' => [_t(__CLASS__ . '.MsgNoToken', 'Could not get an access token from Instagram'), false],
+            'failed' => [_t(__CLASS__ . '.MsgFailed', 'Instagram authentication failed, see the error log'), false],
+            'savefailed' => [_t(__CLASS__ . '.MsgSaveFailed', 'Failed to save the member'), false],
+        ];
     }
 
     protected function onBeforeWrite()

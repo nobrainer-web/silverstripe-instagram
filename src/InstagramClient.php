@@ -13,9 +13,9 @@ use Psr\Http\Message\RequestInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Config\Configurable;
-use SilverStripe\ORM\ArrayList;
 use SilverStripe\ORM\DataList;
 use SilverStripe\Security\Member;
+use SilverStripe\Security\SecurityToken;
 use SilverStripe\SiteConfig\SiteConfig;
 
 /**
@@ -26,19 +26,23 @@ class InstagramClient
 {
     use Configurable;
 
+    // Instagram API with Instagram Login (the Basic Display API was shut down by Meta on 2024-12-04)
     const API_URL = 'https://graph.instagram.com/';
+
+    const AUTHORIZE_URL = 'https://www.instagram.com/oauth/authorize';
+
+    private static $api_version = 'v20.0';
 
     private static $app_id = null;
 
     private static $app_secret = null;
 
     private static $scope = [
-        'user_profile',
-        'user_media'
+        'instagram_business_basic',
     ];
 
     private static $user_fields = [
-        'id',
+        'user_id',
         'username'
     ];
 
@@ -78,7 +82,7 @@ class InstagramClient
         }));
 
         $this->client = new Client([
-            'base_uri' => self::API_URL,
+            'base_uri' => self::API_URL . self::config()->get('api_version') . '/',
             'handler' => $handler
         ]);
     }
@@ -90,7 +94,7 @@ class InstagramClient
      */
     public function getLongLivedAccessToken()
     {
-        return $this->client->get('access_token', [
+        return $this->client->get(self::API_URL . 'access_token', [
             'query' => [
                 'grant_type'=> 'ig_exchange_token'
             ]
@@ -104,7 +108,7 @@ class InstagramClient
      */
     public function getRefreshLongLivedAcctionToken()
     {
-        return $this->client->get('refresh_access_token', [
+        return $this->client->get(self::API_URL . 'refresh_access_token', [
             'query' => [
                 'grant_type'=> 'ig_refresh_token'
             ]
@@ -197,15 +201,16 @@ class InstagramClient
      */
     public static function getAuthenticationURL()
     {
-        $url = Controller::join_links([InstagramAuthClient::AUTH_URL, 'authorize']);
         $query = [
             'client_id' => self::getAppID(),
             'redirect_uri' => Director::absoluteURL(CallbackController::REDIRECT_URL),
             'scope' => implode(',', self::config()->get('scope')),
             'response_type' => self::config()->get('response_type'),
+            // checked in CallbackController::authenticate() (OAuth CSRF protection)
+            'state' => SecurityToken::inst()->getValue(),
         ];
 
-        return $url . '?' . http_build_query($query);
+        return self::AUTHORIZE_URL . '?' . http_build_query($query);
     }
 
     /**

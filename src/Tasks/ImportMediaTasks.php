@@ -9,6 +9,10 @@ use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Dev\BuildTask;
+use SilverStripe\PolyExecution\PolyOutput;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputInterface;
+use Throwable;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\FieldType\DBDatetime;
 use SilverStripe\Security\Member;
@@ -22,12 +26,12 @@ use SilverStripe\Versioned\Versioned;
  */
 class ImportMediaTasks extends BuildTask
 {
-    /**
-     * @var Instagram
-     */
-    protected $instagram;
+    protected string $title = 'Import Instagram media';
 
-    protected $enabled = true;
+    protected static string $description = 'Refresh each connected member\'s token and import their latest Instagram media';
+
+    // keep the SS4/SS5 task URL (dev/tasks/Broarm-Instagram-Tasks-ImportMediaTasks)
+    protected static string $commandName = 'Broarm-Instagram-Tasks-ImportMediaTasks';
 
     private static $data_mapping = [
         'id' => 'InstagramID',
@@ -40,31 +44,35 @@ class ImportMediaTasks extends BuildTask
         'username' => 'InstagramUserName',
     ];
 
-    /**
-     * Run the facebook import task
-     *
-     * @param $request
-     */
-    public function run($request)
+    protected function execute(InputInterface $input, PolyOutput $output): int
     {
         /** @var Member|MemberExtension $member */
         foreach (InstagramClient::getAuthenticatedMembers() as $member) {
             self::log("Import Instagram post for {$member->getName()}");
-            $client = new InstagramClient($member->InstagramAccessToken);
+            try {
+                // Refresh the access token; keep the old one unless a new one arrives
+                // (the old version wrote an empty token on any failed refresh and lost the connection)
+                $client = new InstagramClient($member->InstagramAccessToken);
+                $token = json_decode($client->getRefreshLongLivedAcctionToken()->getBody()->getContents());
+                if (!empty($token->access_token)) {
+                    $member->InstagramAccessToken = $token->access_token;
+                    if (!empty($token->expires_in)) {
+                        $member->InstagramAccessTokenExpirers = date('Y-m-d H:i:s', DBDatetime::now()->getTimestamp() + (int) $token->expires_in);
+                    }
+                    $member->write();
+                } else {
+                    self::log("Token refresh for {$member->getName()} returned no token, keeping the current one", 'warning');
+                }
 
-            // Refresh the access token
-            $tokenResponse = $client->getRefreshLongLivedAcctionToken();
-            $token = json_decode($tokenResponse->getBody()->getContents());
+                $client = new InstagramClient($member->InstagramAccessToken);
+                $response = json_decode($client->getUserMedia()->getBody()->getContents());
+            } catch (Throwable $e) {
+                self::log("Instagram request for {$member->getName()} failed: " . $e->getMessage(), 'error');
+                $output->writeln("<error>Instagram request for {$member->getName()} failed</error>");
+                continue;
+            }
 
-            $member->InstagramAccessToken = $token->access_token;
-            $member->write();
-
-            // Initiate a new client with the fresh token
-            $client = new InstagramClient($member->InstagramAccessToken);
-            $response = $client->getUserMedia();
-            $response = json_decode($response->getBody()->getContents());
-
-            if (property_exists($response, 'data')) {
+            if ($response && property_exists($response, 'data')) {
                 foreach ($response->data as $mediaObject) {
                     $obj = self::handleObject($mediaObject);
                     self::log("Created instagram media obj with ID {$obj->ID} from source {$obj->InstagramID}");
@@ -72,7 +80,8 @@ class ImportMediaTasks extends BuildTask
             }
         }
 
-        exit('Done');
+        $output->writeln('Done');
+        return Command::SUCCESS;
     }
 
     /**

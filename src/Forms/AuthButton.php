@@ -11,7 +11,7 @@ class AuthButton extends LiteralField
     public function __construct($name)
     {
         $label = _t(__CLASS__ . '.Authenticate', 'Authenticate Instagram');
-        $authUrl = InstagramClient::getAuthenticationURL();
+        $authUrl = htmlspecialchars(InstagramClient::getAuthenticationURL(), ENT_QUOTES);
         $button = "<a href='{$authUrl}' class='btn action btn-primary'>{$label}</a>";
         parent::__construct($name, $button);
     }

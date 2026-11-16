@@ -4,6 +4,7 @@ namespace Broarm\Instagram;
 
 use Broarm\Instagram\Controllers\CallbackController;
 use GuzzleHttp\Client;
+use RuntimeException;
 use SilverStripe\Control\Director;
 
 class InstagramAuthClient
@@ -37,11 +38,11 @@ class InstagramAuthClient
     public function getAccessToken($code)
     {
         if (!$appId = InstagramClient::getAppID()) {
-            throw new Exception('No app id configured, set this in your config under Broarm\Instagram\InstagramClient.app_id of in the DB trough site config');
+            throw new RuntimeException('No app id configured, set this in your config under Broarm\Instagram\InstagramClient.app_id of in the DB trough site config');
         }
 
         if (!$appSecret = InstagramClient::getAppSecret()) {
-            throw new Exception('No app secret configured, set this in your config under Broarm\Instagram\InstagramClient.app_secret of in the DB trough site config');
+            throw new RuntimeException('No app secret configured, set this in your config under Broarm\Instagram\InstagramClient.app_secret of in the DB trough site config');
         }
 
         return $this->client->post('access_token', [

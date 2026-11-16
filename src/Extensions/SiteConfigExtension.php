@@ -4,7 +4,7 @@ namespace Broarm\Instagram\Extensions;
 
 use Broarm\Instagram\InstagramClient;
 use SilverStripe\Control\Controller;
-use SilverStripe\ORM\DataExtension;
+use SilverStripe\Core\Extension;
 use SilverStripe\Control\Director;
 use SilverStripe\Forms\FieldList;
 use SilverStripe\SiteConfig\SiteConfig;
@@ -19,14 +19,14 @@ use Broarm\Instagram\Instagram;
  * @property string InstagramAppSecret
  * @property |SiteConfig|InstagramAuthenticator owner
  */
-class SiteConfigExtension extends DataExtension
+class SiteConfigExtension extends Extension
 {
     private static $db = [
         'InstagramAppID' => 'Varchar',
         'InstagramAppSecret' => 'Varchar'
     ];
 
-    public function updateCMSFields(FieldList $fields)
+    protected function updateCMSFields(FieldList $fields)
     {
         // Check if the App ID/Secret already exists or give the user a option to set it trough the CMS
         // The App ID/Secret can also be set trough the config.yml

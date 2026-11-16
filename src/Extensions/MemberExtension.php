@@ -33,7 +33,7 @@ use Exception;
 class MemberExtension extends Extension
 {
     private static $db = [
-        'InstagramAccessToken' => 'Varchar',
+        'InstagramAccessToken' => 'Text', // long-lived tokens have no documented maximum length
         'InstagramAccessTokenExpirers' => 'Datetime',
         'InstagramID' => 'Varchar',
         'InstagramUserName' => 'Varchar',
@@ -89,8 +89,10 @@ class MemberExtension extends Extension
                 $response = $client->getUser();
                 $user = json_decode($response->getBody()->getContents());
                 if (!empty($user)) {
-                    $this->getOwner()->InstagramID = $user->user_id ?? $user->id ?? null;
-                    $this->getOwner()->InstagramUserName = $user->username;
+                    // SS6 validates Varchar fields: the API returns the id as a number
+                    $id = $user->user_id ?? $user->id ?? null;
+                    $this->getOwner()->InstagramID = $id === null ? null : (string) $id;
+                    $this->getOwner()->InstagramUserName = isset($user->username) ? (string) $user->username : null;
                 }
             } catch (Exception $e) {
                 // soft error ?

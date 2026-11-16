@@ -4,6 +4,7 @@ namespace Broarm\Instagram\Controllers;
 
 use Broarm\Instagram\InstagramAuthClient;
 use Broarm\Instagram\InstagramClient;
+use Broarm\Instagram\Tasks\ImportMediaTasks;
 use Exception;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
@@ -96,7 +97,7 @@ class CallbackController extends Controller
 
         $request = $this->getRequest();
         if ($request->getVar('error')) {
-            return $this->redirectWithMessage((string) ($request->getVar('error_description') ?: $request->getVar('error')));
+            return $this->redirectWithMessage(mb_substr((string) ($request->getVar('error_description') ?: $request->getVar('error')), 0, 200));
         }
         // state was set to the CMS security token when building the authorize URL
         if (!hash_equals((string) SecurityToken::inst()->getValue(), (string) $request->getVar('state'))) {
@@ -122,13 +123,15 @@ class CallbackController extends Controller
                 return $this->redirectWithMessage('Could not read long lived access token from response');
             }
         } catch (Exception $e) {
-            return $this->redirectWithMessage($e->getMessage());
+            // the message can contain the request URL: log it without secrets, show a generic message
+            ImportMediaTasks::log('Instagram authentication failed: ' . InstagramClient::redact($e->getMessage()), 'error');
+            return $this->redirectWithMessage('Instagram authentication failed, see the error log');
         }
 
         $member->update([
             'InstagramAccessToken' => $response->access_token,
             'InstagramAccessTokenExpirers' => date('Y-m-d H:i:s', DBDatetime::now()->getTimestamp() + (int) $response->expires_in),
-            'InstagramID' => $userID,
+            'InstagramID' => (string) $userID,
         ]);
 
         try {

@@ -67,7 +67,7 @@ class ImportMediaTasks extends BuildTask
                 $client = new InstagramClient($member->InstagramAccessToken);
                 $response = json_decode($client->getUserMedia()->getBody()->getContents());
             } catch (Throwable $e) {
-                self::log("Instagram request for {$member->getName()} failed: " . $e->getMessage(), 'error');
+                self::log("Instagram request for {$member->getName()} failed: " . InstagramClient::redact($e->getMessage()), 'error');
                 $output->writeln("<error>Instagram request for {$member->getName()} failed</error>");
                 continue;
             }
@@ -111,7 +111,7 @@ class ImportMediaTasks extends BuildTask
                 $mediaObject->publishSingle();
             }
         } catch (\Exception $e) {
-            self::log($e->getMessage(), 'error');
+            self::log(InstagramClient::redact($e->getMessage()), 'error');
         }
 
         return $mediaObject;

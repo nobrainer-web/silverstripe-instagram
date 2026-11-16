@@ -3,7 +3,6 @@
 namespace Broarm\Instagram;
 
 use Broarm\Instagram\Controllers\CallbackController;
-use Broarm\Instagram\Tasks\ImportMediaTasks;
 use GuzzleHttp\Client;
 use GuzzleHttp\Handler\CurlHandler;
 use GuzzleHttp\HandlerStack;
@@ -13,6 +12,7 @@ use Psr\Http\Message\RequestInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Config\Configurable;
+use SilverStripe\Core\Environment;
 use SilverStripe\ORM\DataList;
 use SilverStripe\Security\Member;
 use SilverStripe\Security\SecurityToken;
@@ -61,13 +61,9 @@ class InstagramClient
      */
     public function __construct($accessToken)
     {
-        if (!$appSecret = self::getAppSecret()) {
-            ImportMediaTasks::log('No app secret configured, set this in your config under Broarm\Instagram\InstagramClient.app_secret of in the DB trough site config', 'error');
-            return;
-        }
-
+        // only the access token travels with every request; the app secret is sent only where Meta needs it
+        // (token exchange), so it can't end up in logs or error messages of ordinary API calls
         $defaultQuery = [
-            'client_secret' => $appSecret,
             'access_token' => $accessToken
         ];
 
@@ -88,15 +84,27 @@ class InstagramClient
     }
 
     /**
+     * Remove tokens, secrets and codes from a message (Guzzle exceptions contain the request URL)
+     */
+    public static function redact(string $message): string
+    {
+        return preg_replace('/((?:access_token|client_secret|code|fb_exchange_token)=)[^&\s"\']+/i', '$1***', $message);
+    }
+
+    /**
      * Exchange the short lived access token for a long lived access token
      *
      * @return \Psr\Http\Message\ResponseInterface
      */
     public function getLongLivedAccessToken()
     {
+        if (!$appSecret = self::getAppSecret()) {
+            throw new \RuntimeException('No Instagram app secret configured (INSTAGRAM_APP_SECRET in .env, or config)');
+        }
         return $this->client->get(self::API_URL . 'access_token', [
             'query' => [
-                'grant_type'=> 'ig_exchange_token'
+                'grant_type'=> 'ig_exchange_token',
+                'client_secret' => $appSecret,
             ]
         ]);
     }
@@ -179,8 +187,8 @@ class InstagramClient
      */
     public static function getAppID()
     {
-        $siteConfig = SiteConfig::current_site_config();
-        return self::config()->get('app_id') ?: $siteConfig->InstagramAppID;
+        // .env first (keeps the key out of the repository), then config, then the CMS field
+        return Environment::getEnv('INSTAGRAM_APP_ID') ?: self::config()->get('app_id') ?: SiteConfig::current_site_config()->InstagramAppID;
     }
 
     /**
@@ -190,8 +198,7 @@ class InstagramClient
      */
     public static function getAppSecret()
     {
-        $siteConfig = SiteConfig::current_site_config();
-        return self::config()->get('app_secret') ?: $siteConfig->InstagramAppSecret;
+        return Environment::getEnv('INSTAGRAM_APP_SECRET') ?: self::config()->get('app_secret') ?: SiteConfig::current_site_config()->InstagramAppSecret;
     }
 
     /**

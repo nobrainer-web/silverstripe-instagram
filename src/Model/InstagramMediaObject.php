@@ -3,7 +3,6 @@
 namespace Broarm\Instagram\Model;
 
 use GuzzleHttp\Client;
-use GuzzleHttp\Stream\GuzzleStreamWrapper;
 use SilverStripe\Assets\FileNameFilter;
 use SilverStripe\Assets\Folder;
 use SilverStripe\Assets\Image;
@@ -55,7 +54,8 @@ class InstagramMediaObject extends Image
     public function onBeforeWrite()
     {
         parent::onBeforeWrite();
-        $this->Title = $this->InstagramCaptionText;
+        // File.Title is Varchar(255); SS6 rejects longer values on write (captions can be up to 2,200 characters)
+        $this->Title = mb_substr((string) $this->InstagramCaptionText, 0, 255);
     }
 
     /**
@@ -93,7 +93,9 @@ class InstagramMediaObject extends Image
      */
     public function findOwnerID()
     {
-        if ($user = DataObject::get_one(Member::class, ['InstagramID' => $this->InstagramUserID])) {
+        // the member who connected this account (InstagramUserID never existed: the old lookup matched any member without an Instagram ID)
+        $user = $this->InstagramUserName ? Member::get()->filter('InstagramUserName', $this->InstagramUserName)->first() : null;
+        if ($user) {
             return $user->ID;
         } elseif ($user = Security::getCurrentUser()) {
             return $user->ID;
@@ -109,21 +111,27 @@ class InstagramMediaObject extends Image
      */
     public function downloadImage()
     {
-        $client = new Client(['http_errors' => false]);
-        $folder = Folder::find_or_make($this->uploadFolder());
-        $imageSource = $this->InstagramImageURL;
-        $sourcePath = pathinfo($imageSource);
-        $fileName = explode('?', $sourcePath['basename'])[0];
-        $request = $client->request('GET', $imageSource);
-        $stream = $request->getBody();
-
-        if ($stream->isReadable()) {
-            $this->setFromStream($stream->detach(), $fileName);
-            $this->ParentID = $folder->ID;
-            $this->OwnerID = $this->findOwnerID();
-        } else {
-            throw new \Exception("Error while downloading file: $imageSource");
+        $imageSource = (string) $this->InstagramImageURL;
+        $parts = parse_url($imageSource);
+        $host = strtolower($parts['host'] ?? '');
+        // only images from Instagram's own CDN, over https (the URL comes from the API response)
+        $allowedHost = (bool) preg_match('/(^|\.)(cdninstagram\.com|fbcdn\.net)$/', $host);
+        $fileName = basename($parts['path'] ?? '');
+        $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+        if (($parts['scheme'] ?? '') !== 'https' || !$allowedHost || !in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+            throw new \Exception('Refused to download media (not an https image on the Instagram CDN): ' . $host . '/' . $fileName);
         }
+
+        $client = new Client(['http_errors' => false, 'timeout' => 30, 'allow_redirects' => false]);
+        $response = $client->request('GET', $imageSource);
+        if ($response->getStatusCode() !== 200 || stripos($response->getHeaderLine('Content-Type'), 'image/') !== 0) {
+            throw new \Exception('Error while downloading media from ' . $host . ' (HTTP ' . $response->getStatusCode() . ')');
+        }
+
+        $folder = Folder::find_or_make($this->uploadFolder());
+        $this->setFromStream($response->getBody()->detach(), $fileName);
+        $this->ParentID = $folder->ID;
+        $this->OwnerID = $this->findOwnerID();
     }
 
     /**

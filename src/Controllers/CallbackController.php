@@ -100,7 +100,8 @@ class CallbackController extends Controller
             return $this->redirectWithMessage(mb_substr((string) ($request->getVar('error_description') ?: $request->getVar('error')), 0, 200));
         }
         // state was set to the CMS security token when building the authorize URL
-        if (!hash_equals((string) SecurityToken::inst()->getValue(), (string) $request->getVar('state'))) {
+        $state = (string) $request->getVar('state');
+        if ($state === '' || !hash_equals((string) SecurityToken::inst()->getValue(), $state)) {
             return $this->redirectWithMessage('Invalid state, please try again');
         }
         $code = $request->getVar('code');

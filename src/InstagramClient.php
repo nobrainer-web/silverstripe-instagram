@@ -214,10 +214,23 @@ class InstagramClient
             'scope' => implode(',', self::config()->get('scope')),
             'response_type' => self::config()->get('response_type'),
             // checked in CallbackController::authenticate() (OAuth CSRF protection)
-            'state' => SecurityToken::inst()->getValue(),
+            'state' => self::stateToken(),
         ];
 
         return self::AUTHORIZE_URL . '?' . http_build_query($query);
+    }
+
+    /**
+     * The OAuth state: the session's security token. Outside a web request (CLI, tests) there is no session;
+     * the URL is then built without a state, and CallbackController::authenticate() rejects it.
+     */
+    protected static function stateToken(): string
+    {
+        try {
+            return (string) SecurityToken::inst()->getValue();
+        } catch (\Exception $e) {
+            return '';
+        }
     }
 
     /**

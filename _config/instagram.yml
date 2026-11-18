@@ -9,6 +9,13 @@ SilverStripe\Security\Member:
   extensions:
     - Broarm\Instagram\Extensions\MemberExtension
 
+SilverStripe\Core\Injector\Injector:
+  Psr\SimpleCache\CacheInterface.InstagramOAuth:
+    factory: SilverStripe\Core\Cache\CacheFactory
+    constructor:
+      namespace: 'InstagramOAuth'
+      defaultLifetime: 300
+
 ---
 Name: instagram_routes
 ---

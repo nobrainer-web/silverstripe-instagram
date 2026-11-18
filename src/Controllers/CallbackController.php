@@ -6,11 +6,13 @@ use Broarm\Instagram\InstagramAuthClient;
 use Broarm\Instagram\InstagramClient;
 use Broarm\Instagram\Tasks\ImportMediaTasks;
 use Exception;
+use Psr\SimpleCache\CacheInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Convert;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\FieldType\DBDatetime;
 use SilverStripe\Security\Member;
 use SilverStripe\Security\Permission;
@@ -31,6 +33,11 @@ class CallbackController extends Controller
     private static $url_handlers = [
         'revoke/$ID' => 'revoke',
     ];
+
+    /**
+     * Cache key (hash of the OAuth code) of the authentication in progress
+     */
+    protected ?string $oauthKey = null;
 
     private static $allowed_actions = [
         'authenticate',
@@ -111,7 +118,8 @@ class CallbackController extends Controller
             $query['samesite'] = 1;
             // relative: never depends on the request's Host header
             $url = Convert::raw2att(rtrim(self::REDIRECT_URL, '/') . '/?' . http_build_query($query));
-            return HTTPResponse::create("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=$url\"><title>Instagram</title><a href=\"$url\">Continue</a>")
+            // no link to click: a click on top of the automatic refresh sends the one-time code twice
+            return HTTPResponse::create("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=$url\"><title>Instagram</title><p>Redirecting…</p>")
                 ->addHeader('Content-Type', 'text/html; charset=utf-8')
                 ->addHeader('Cache-Control', 'no-store')
                 ->addHeader('Referrer-Policy', 'no-referrer');
@@ -127,6 +135,26 @@ class CallbackController extends Controller
             ImportMediaTasks::log('Instagram authorization error: ' . InstagramClient::redact(mb_substr((string) ($request->getVar('error_description') ?: $request->getVar('error')), 0, 200)), 'warning');
             return $this->redirectWithMessage('denied');
         }
+        $code = $request->getVar('code');
+        if (!$code || !is_string($code)) {
+            return $this->redirectWithMessage('nocode');
+        }
+
+        // the same code can arrive twice (double click, a reload). SilverStripe saves the session only at the end of a request,
+        // so the state check below doesn't stop a quick second request: let it wait for the first one's result instead of
+        // sending the used code to Meta again (which fails and replaces the success message with an error)
+        $cache = Injector::inst()->get(CacheInterface::class . '.InstagramOAuth');
+        $this->oauthKey = hash('sha256', $code);
+        if ($cache->has($this->oauthKey)) {
+            $key = $this->oauthKey;
+            $this->oauthKey = null;
+            for ($i = 0; $i < 30 && ($result = $cache->get($key)) === 'pending'; $i++) {
+                usleep(500000);
+            }
+            $result = ($result ?? 'pending') === 'pending' ? 'failed' : $result;
+            return $this->redirectWithMessage($result, $result === 'authenticated' ? self::MESSAGE_SUCCESS : self::MESSAGE_ERROR);
+        }
+
         // state was set to the CMS security token when building the authorize URL
         // one-time OAuth state from the session (InstagramClient::stateToken), cleared after use
         $session = $request->getSession();
@@ -136,10 +164,7 @@ class CallbackController extends Controller
         if ($expected === '' || $state === '' || !hash_equals($expected, $state)) {
             return $this->redirectWithMessage('state');
         }
-        $code = $request->getVar('code');
-        if (!$code) {
-            return $this->redirectWithMessage('nocode');
-        }
+        $cache->set($this->oauthKey, 'pending');
 
         try {
             // system-user access token from the authorization code (expiry is set in the login configuration)
@@ -184,6 +209,11 @@ class CallbackController extends Controller
      */
     protected function redirectWithMessage(string $code, $success = self::MESSAGE_ERROR, ?int $memberID = null): HTTPResponse
     {
+        // record the outcome for a duplicate request with the same OAuth code (see authenticate())
+        if ($this->oauthKey) {
+            Injector::inst()->get(CacheInterface::class . '.InstagramOAuth')->set($this->oauthKey, $code);
+            $this->oauthKey = null;
+        }
         // only a message code travels in the URL; the text is looked up in MemberExtension::messages()
         $current = Security::getCurrentUser();
         $memberID = $memberID ?: ($current ? $current->ID : 0);

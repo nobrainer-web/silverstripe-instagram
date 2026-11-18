@@ -82,7 +82,8 @@ class MemberExtension extends Extension
         } else {
             $fields->addFieldsToTab('Root.Instagram', array(
                 ReadonlyField::create('InstagramUserName', _t(__CLASS__ . '.InstagramUserName', 'Connected to IG account')),
-                ReadonlyField::create('InstagramStatus', _t(__CLASS__ . '.InstagramStatus', 'Last import'))
+                // own name: a field named after the DB column gets its (empty) value back from the form and shows "('none')"
+                ReadonlyField::create('InstagramStatusDisplay', _t(__CLASS__ . '.InstagramStatus', 'Last import'))
                     ->setValue($this->getOwner()->InstagramStatus ?: _t(__CLASS__ . '.InstagramStatusNone', 'Not run yet')),
                 RevokeButton::create('InstagramRevokeButton', $this->getOwner()->ID)
             ));

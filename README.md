@@ -1,55 +1,76 @@
 # Silverstripe Instagram
 
-Add support for the [Instagram Basic Display API](https://developers.facebook.com/docs/instagram-basic-display-api) to your website.
-Creates a tab in on the Member section where content authors can authenticate with your Instagram app.
-The module contains a task that fetches the authenticated member's images form instagram.
+Show the posts of an Instagram professional account on a Silverstripe 6 site. Uses the
+[Instagram API with Unified Login](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started)
+(read only: permission `instagram_basic`).
 
-You can also paste a token from your app on [developers.facebook.com](https://developers.facebook.com/) with the [User Token Generator](https://developers.facebook.com/docs/instagram-basic-display-api/overview#user-token-generator).
-That way you can easily set up a connection for a client, your client only needs to accept the invitation from your facebook app. 
+- A CMS user connects an Instagram account once, on the **Instagram** tab of their member record (Security admin).
+- A task imports the account's latest posts (single images) into `Broarm\Instagram\Model\InstagramMediaObject` (stored as images in Files).
+- The token never expires (system-user token), so no refresh is needed.
 
-### Installation
+Meta closed the Basic Display API (2024-12-04), and new Meta apps can no longer use "Instagram Login"; Unified Login is the route for new apps.
 
-Install the module trough composer
+## Installation
 
 ```bash
-composer require bramdeleeuw/silverstripe-instagram
+composer require nobrainer-web/silverstripe-instagram
 ```
 
-Set up your app in [developers.facebook.com](https://developers.facebook.com/) and follow [these instructions](https://developers.facebook.com/docs/instagram-basic-display-api/getting-started) to add the Instagram Basic API.
-After completing step 3 you should have an app set up with at least one test user and a `app_id` and `app_secret`.
-From the test users overview you can also generate a user token so you don't have to authorise trough the CMS.  
+## Meta app setup (once per site)
 
-Configure the `app_id` and `app_secret` in your yml config. Or you can use the CMS Setting to connect with your app.
+1. A Meta app owned by a **business portfolio** (business.facebook.com), with the use case *Manage messaging & content on Instagram*.
+2. *Facebook Login for Business > Configurations > Create configuration*: login variation **General**, **System-user access token** (never expires), asset **Instagram accounts** (required), permission **`instagram_basic`** only. Copy the configuration ID.
+   (The ready-made template asks for ads, messaging and publishing too; avoid it.)
+3. *Use cases > Customize > API setup with Unified login*: select the configuration (it must say "Instagram Login Compatible") and register the redirect URL `https://<your-site>/instagram/authenticate/` (with the trailing slash).
+4. *App roles > Roles*: add the Instagram account as **Instagram Tester**; the account accepts it in Instagram under *Settings > Apps and websites > Tester invites*.
+   In Development mode only accounts with a role on the app can connect; that's enough for a site that shows its own account. Other accounts need App Review and Live mode.
+5. *App settings > Basic*: fill in a privacy policy URL, a data deletion URL, an icon and a contact email (Meta's Platform Terms require a privacy policy).
 
-```yaml
-Broarm\Instagram\InstagramClient:
-  app_id: 'YOUR_APP_ID'
-  app_secret: 'YOUR_APP_SECRET'
+## Configuration
+
+Put the keys in `.env` (preferred; never commit the secret):
+
+```
+INSTAGRAM_APP_ID="<Meta app ID>"
+INSTAGRAM_APP_SECRET="<Meta app secret>"
+INSTAGRAM_CONFIG_ID="<login configuration ID>"
 ```
 
-Next authorize your user so you can read their feed. Each member can be connected to their own feed, so you can read the feed from multiple users.
-Go to the Security admin and select the member you want to connect to instagram. 
-Here you hava a button to authenticate instagram, this will redirect to a Instagram authentication screen where the user can connect themselves (make sure you are loggen in with the account you want to connect).
-Or you have the option to paste a generated user token, after a save you should see the profile is connected.
+Or in YAML (`Broarm\Instagram\InstagramClient`: `app_id`, `app_secret`, `config_id`), or in the CMS under *Settings > Instagram* (the fields only show when the value isn't set in `.env` or YAML; the secret field is write-only).
 
-### Available methods
+## Connect
 
-The default behaviour runs a task that checks media from authenticated users. This data gets stored in `Broarm\Instagram\Model\InstagramMediaObject`'s. 
-The simplest way to get started would by by running the task either by cron or by hand and querying the `Broarm\Instagram\Model\InstagramMediaObject`.
+Security admin > a member > tab **Instagram** > **Authenticate Instagram** > log in **with Instagram** (or Facebook) > pick the business portfolio and the Instagram account > Allow.
+Meta creates a business portfolio for the account during this login if it has none.
 
-But you could also create your own tasks or, request the api directly, with the following methods.
+Alternatively paste a token generated in the app (*API setup with Unified login > Generate access tokens*, testers only).
+
+## Import
+
+Run once a day, e.g. by cron:
+
+```bash
+vendor/bin/sake tasks:Broarm-Instagram-Tasks-ImportMediaTasks
+```
+
+The tab shows the result of the last import ("Last import"). If it reports error `190`, the connection no longer works
+(the app was removed under *Connected apps* in the account's business portfolio, or the Meta app became inactive after 90 days without use): connect again.
+
+The daily import also keeps the Meta app active.
+
+## Endpoints
+
+| URL | Purpose |
+|---|---|
+| `/instagram/authenticate/` | OAuth redirect target (CMS login required). Bounces once through a same-site page, because SS6 session cookies are `SameSite=Strict` and are not sent on the redirect back from Meta. |
+| `/instagram/revoke/<memberID>` | Disconnect (CMS login + security token; own member or security admin) |
+| `/instagram/deauthorize/`, `/instagram/deletedata/` | Meta callbacks; acknowledge with `[]` |
+
+## API
 
 ```php
-$member = Security::getCurrentUser();
-$instagram = new \Broarm\Instagram\InstagramClient($member->InstagramAccessToken);
- 
-// Get the media from the user connected to the access token
-$instagram->getUserMedia();
-
-// Get the media for the given user id
-$instagram->getUserMedia($member->InstagramID); 
-
-// The above calls return a simple array with media id's 
-// Use this call to get the media for the given id
-$instagram->getMedia($id);
+$client = new \Broarm\Instagram\InstagramClient($member->InstagramAccessToken);
+$account = $client->getInstagramAccount();          // id + username of the connected account
+$client->getUserMedia($member->InstagramID);         // latest media
+$client->getMedia($mediaId);                         // one media item
 ```

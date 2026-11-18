@@ -8,6 +8,7 @@ use Broarm\Instagram\Tasks\ImportMediaTasks;
 use Exception;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
+use SilverStripe\Core\Convert;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\ORM\FieldType\DBDatetime;
@@ -79,6 +80,7 @@ class CallbackController extends Controller
             'InstagramAccessTokenExpirers' => null,
             'InstagramID' => null,
             'InstagramUserName' => null,
+            'InstagramStatus' => null,
         ]);
         $member->write();
 
@@ -90,12 +92,25 @@ class CallbackController extends Controller
      */
     public function authenticate(): HTTPResponse
     {
+        $request = $this->getRequest();
+        // SS6 session cookies are SameSite=Strict: the browser leaves them out when Meta redirects here from facebook.com,
+        // so the member looks logged out and the OAuth state is gone. Bounce once through a page on our own site:
+        // the follow-up request is same-site and carries the session cookie.
+        if (!$request->getVar('samesite')) {
+            $query = array_intersect_key($request->getVars(), array_flip(['code', 'state', 'error', 'error_reason', 'error_description']));
+            $query['samesite'] = 1;
+            $url = Convert::raw2att(Director::absoluteURL(self::REDIRECT_URL) . '?' . http_build_query($query));
+            return HTTPResponse::create("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=$url\"><title>Instagram</title><a href=\"$url\">Continue</a>")
+                ->addHeader('Content-Type', 'text/html; charset=utf-8')
+                ->addHeader('Cache-Control', 'no-store')
+                ->addHeader('Referrer-Policy', 'no-referrer');
+        }
+
         $member = Security::getCurrentUser();
         if (!$member || !Permission::check('CMS_ACCESS')) {
             return Security::permissionFailure($this);
         }
 
-        $request = $this->getRequest();
         if ($request->getVar('error')) {
             // Instagram's own error text is logged, not shown (it arrives in the URL and could be crafted)
             ImportMediaTasks::log('Instagram authorization error: ' . InstagramClient::redact(mb_substr((string) ($request->getVar('error_description') ?: $request->getVar('error')), 0, 200)), 'warning');
@@ -116,18 +131,14 @@ class CallbackController extends Controller
         }
 
         try {
-            // short lived token from the authorization code
+            // system-user access token from the authorization code (expiry is set in the login configuration)
             $response = json_decode((new InstagramAuthClient())->getAccessToken($code)->getBody()->getContents());
-            if (empty($response->access_token) || empty($response->user_id)) {
+            if (empty($response->access_token)) {
                 return $this->redirectWithMessage('notoken');
             }
-            $userID = $response->user_id;
-
-            // exchange it for a long lived token (60 days) that the import refreshes
-            $response = json_decode((new InstagramClient($response->access_token))
-                ->getLongLivedAccessToken()->getBody()->getContents());
-            if (empty($response->access_token) || empty($response->expires_in)) {
-                return $this->redirectWithMessage('notoken');
+            $account = (new InstagramClient($response->access_token))->getInstagramAccount();
+            if (!$account || empty($account->id)) {
+                return $this->redirectWithMessage('noaccount');
             }
         } catch (Exception $e) {
             // the message can contain the request URL: log it without secrets, show a generic message
@@ -137,8 +148,11 @@ class CallbackController extends Controller
 
         $member->update([
             'InstagramAccessToken' => $response->access_token,
-            'InstagramAccessTokenExpirers' => date('Y-m-d H:i:s', DBDatetime::now()->getTimestamp() + (int) $response->expires_in),
-            'InstagramID' => (string) $userID,
+            'InstagramAccessTokenExpirers' => empty($response->expires_in) ? null
+                : date('Y-m-d H:i:s', DBDatetime::now()->getTimestamp() + (int) $response->expires_in),
+            'InstagramID' => (string) $account->id,
+            'InstagramUserName' => isset($account->username) ? (string) $account->username : null,
+            'InstagramStatus' => null,
         ]);
 
         try {

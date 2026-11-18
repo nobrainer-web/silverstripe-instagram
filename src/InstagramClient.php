@@ -25,27 +25,22 @@ class InstagramClient
 {
     use Configurable;
 
-    // Instagram API with Instagram Login (the Basic Display API was shut down by Meta on 2024-12-04)
-    const API_URL = 'https://graph.instagram.com/';
+    // Instagram API with Unified Login (Facebook Login for Business). New Meta apps can't use "Instagram Login" any more,
+    // and the Basic Display API was shut down by Meta on 2024-12-04.
+    const API_URL = 'https://graph.facebook.com/';
 
-    const AUTHORIZE_URL = 'https://www.instagram.com/oauth/authorize';
+    const AUTHORIZE_URL = 'https://www.facebook.com/dialog/oauth';
 
     const STATE_SESSION_KEY = 'InstagramOAuthState';
 
-    private static $api_version = 'v20.0';
+    private static $api_version = 'v27.0';
 
     private static $app_id = null;
 
     private static $app_secret = null;
 
-    private static $scope = [
-        'instagram_business_basic',
-    ];
-
-    private static $user_fields = [
-        'user_id',
-        'username'
-    ];
+    // the login configuration (Facebook Login for Business → Configurations) decides the permissions (instagram_basic)
+    private static $config_id = null;
 
     private static $response_type = 'code';
 
@@ -68,8 +63,9 @@ class InstagramClient
             'access_token' => $accessToken
         ];
 
-        $handler = new HandlerStack();
-        $handler->setHandler(new CurlHandler());
+        // HandlerStack::create() keeps Guzzle's default middleware (http_errors): Meta's error responses throw
+        // instead of passing as an empty result (an empty stack made a dead token look like "0 posts")
+        $handler = HandlerStack::create(new CurlHandler());
         $handler->unshift(Middleware::mapRequest(function(RequestInterface $request) use ($defaultQuery) {
             $uri = $request->getUri();
             foreach ($defaultQuery as $key => $value) {
@@ -85,6 +81,21 @@ class InstagramClient
     }
 
     /**
+     * Meta's error for a failed request as "code: message" (redacted), or the exception message.
+     * Code 190 = the token no longer works (app removed in the client's business portfolio, app inactive): connect again.
+     */
+    public static function errorSummary(\Throwable $e): string
+    {
+        if ($e instanceof \GuzzleHttp\Exception\RequestException && $e->hasResponse()) {
+            $body = json_decode((string) $e->getResponse()->getBody());
+            if (isset($body->error->code)) {
+                return self::redact((int) $body->error->code . ': ' . mb_substr((string) ($body->error->message ?? ''), 0, 200));
+            }
+        }
+        return self::redact(mb_substr($e->getMessage(), 0, 300));
+    }
+
+    /**
      * Remove tokens, secrets and codes from a message (Guzzle exceptions contain the request URL)
      */
     public static function redact(string $message): string
@@ -93,50 +104,28 @@ class InstagramClient
     }
 
     /**
-     * Exchange the short lived access token for a long lived access token
-     *
-     * @return \Psr\Http\Message\ResponseInterface
-     */
-    public function getLongLivedAccessToken()
-    {
-        if (!$appSecret = self::getAppSecret()) {
-            throw new \RuntimeException('No Instagram app secret configured (INSTAGRAM_APP_SECRET in .env, or config)');
-        }
-        return $this->client->get(self::API_URL . 'access_token', [
-            'query' => [
-                'grant_type'=> 'ig_exchange_token',
-                'client_secret' => $appSecret,
-            ]
-        ]);
-    }
-
-    /**
-     * Refresh the in use access token
-     *
-     * @return \Psr\Http\Message\ResponseInterface
-     */
-    public function getRefreshLongLivedAcctionToken()
-    {
-        return $this->client->get(self::API_URL . 'refresh_access_token', [
-            'query' => [
-                'grant_type'=> 'ig_refresh_token'
-            ]
-        ]);
-    }
-
-    /**
      * Get the user info for the user connected to the token or given id
      *
      * @param string $id
      * @return \Psr\Http\Message\ResponseInterface
      */
-    public function getUser($id = 'me')
+    public function getUser()
     {
-        return $this->client->get($id, [
+        // the token belongs to a business system user, not to the Instagram account: list the accounts it was given
+        return $this->client->get('me/assigned_instagram_accounts', [
             'query' => [
-                'fields'=> implode(',', self::config()->get('user_fields'))
+                'fields' => 'id,username'
             ]
         ]);
+    }
+
+    /**
+     * The (first) Instagram account the token has access to, or null
+     */
+    public function getInstagramAccount(): ?\stdClass
+    {
+        $response = json_decode($this->getUser()->getBody()->getContents());
+        return $response->data[0] ?? null;
     }
 
     /**
@@ -145,7 +134,7 @@ class InstagramClient
      * @param string $id
      * @return \Psr\Http\Message\ResponseInterface
      */
-    public function getUserMedia($id = 'me')
+    public function getUserMedia(string $id)
     {
         return $this->client->get("$id/media", [
             'query' => [
@@ -203,6 +192,14 @@ class InstagramClient
     }
 
     /**
+     * The login configuration ID (Facebook Login for Business)
+     */
+    public static function getConfigID()
+    {
+        return Environment::getEnv('INSTAGRAM_CONFIG_ID') ?: self::config()->get('config_id') ?: SiteConfig::current_site_config()->InstagramConfigID;
+    }
+
+    /**
      * Create the url for authenicating users
      *
      * @return string
@@ -212,7 +209,7 @@ class InstagramClient
         $query = [
             'client_id' => self::getAppID(),
             'redirect_uri' => Director::absoluteURL(CallbackController::REDIRECT_URL),
-            'scope' => implode(',', self::config()->get('scope')),
+            'config_id' => self::getConfigID(),
             'response_type' => self::config()->get('response_type'),
             // checked in CallbackController::authenticate() (OAuth CSRF protection)
             'state' => self::stateToken(),

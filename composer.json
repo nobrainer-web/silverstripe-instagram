@@ -1,6 +1,6 @@
 {
 	"name": "nobrainer-web/silverstripe-instagram",
-	"description": "Link an Instagram professional account (Instagram API with Instagram Login) and import its media",
+	"description": "Link an Instagram professional account (Instagram API with Unified Login) and import its media",
 	"type": "silverstripe-vendormodule",
 	"keywords": [
 		"silverstripe",

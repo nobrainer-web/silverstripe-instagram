@@ -28,7 +28,7 @@ class ImportMediaTasks extends BuildTask
 {
     protected string $title = 'Import Instagram media';
 
-    protected static string $description = 'Refresh each connected member\'s token and import their latest Instagram media';
+    protected static string $description = 'Import the latest Instagram media of each connected member';
 
     // keep the SS4/SS5 task URL (dev/tasks/Broarm-Instagram-Tasks-ImportMediaTasks)
     protected static string $commandName = 'Broarm-Instagram-Tasks-ImportMediaTasks';
@@ -50,34 +50,36 @@ class ImportMediaTasks extends BuildTask
         foreach (InstagramClient::getAuthenticatedMembers() as $member) {
             self::log("Import Instagram post for {$member->getName()}");
             try {
-                // Refresh the access token; keep the old one unless a new one arrives
-                // (the old version wrote an empty token on any failed refresh and lost the connection)
+                // Unified login: the system-user token doesn't need refreshing (the login configuration sets "never expires")
                 $client = new InstagramClient($member->InstagramAccessToken);
-                $token = json_decode($client->getRefreshLongLivedAcctionToken()->getBody()->getContents());
-                if (!empty($token->access_token)) {
-                    $member->InstagramAccessToken = $token->access_token;
-                    if (!empty($token->expires_in)) {
-                        $member->InstagramAccessTokenExpirers = date('Y-m-d H:i:s', DBDatetime::now()->getTimestamp() + (int) $token->expires_in);
+                if (!$member->InstagramID) {
+                    $account = $client->getInstagramAccount();
+                    if (!$account || empty($account->id)) {
+                        throw new \RuntimeException('The token has no Instagram account assigned');
                     }
+                    $member->InstagramID = (string) $account->id;
                     $member->write();
-                } else {
-                    self::log("Token refresh for {$member->getName()} returned no token, keeping the current one", 'warning');
                 }
-
-                $client = new InstagramClient($member->InstagramAccessToken);
-                $response = json_decode($client->getUserMedia()->getBody()->getContents());
+                $response = json_decode($client->getUserMedia($member->InstagramID)->getBody()->getContents());
             } catch (Throwable $e) {
-                self::log("Instagram request for {$member->getName()} failed: " . InstagramClient::redact($e->getMessage()), 'error');
+                // no retry: the next run is tomorrow (Meta asks to stop calling when a limit is hit)
+                $error = InstagramClient::errorSummary($e);
+                self::log("Instagram request for {$member->getName()} failed: $error", 'error');
                 $output->writeln("<error>Instagram request for {$member->getName()} failed</error>");
+                $hint = str_starts_with($error, '190:') ? ' The connection no longer works: connect again.' : '';
+                self::setStatus($member, 'Failed on ' . DBDatetime::now()->Nice() . " ($error).$hint");
                 continue;
             }
 
+            $count = 0;
             if ($response && property_exists($response, 'data')) {
                 foreach ($response->data as $mediaObject) {
                     $obj = self::handleObject($mediaObject);
+                    $count++;
                     self::log("Created instagram media obj with ID {$obj->ID} from source {$obj->InstagramID}");
                 }
             }
+            self::setStatus($member, 'OK on ' . DBDatetime::now()->Nice() . " ($count posts checked)");
         }
 
         $output->writeln('Done');
@@ -137,6 +139,16 @@ class ImportMediaTasks extends BuildTask
         }
     }
     
+    private static function setStatus(Member $member, string $status): void
+    {
+        $member->InstagramStatus = mb_substr($status, 0, 255);
+        try {
+            $member->write();
+        } catch (Throwable $e) {
+            self::log('Could not save the Instagram status: ' . InstagramClient::redact($e->getMessage()), 'warning');
+        }
+    }
+
     public static function log($message, $level = 'info')
     {
         Injector::inst()->get(LoggerInterface::class)->$level($message);

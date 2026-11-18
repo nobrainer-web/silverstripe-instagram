@@ -25,7 +25,8 @@ class SiteConfigExtension extends Extension
 {
     private static $db = [
         'InstagramAppID' => 'Varchar',
-        'InstagramAppSecret' => 'Varchar'
+        'InstagramAppSecret' => 'Varchar',
+        'InstagramConfigID' => 'Varchar',
     ];
 
     protected function updateCMSFields(FieldList $fields)
@@ -36,10 +37,10 @@ class SiteConfigExtension extends Extension
         if (!Environment::getEnv('INSTAGRAM_APP_ID') && !InstagramClient::config()->get('app_id')) {
             $fields->addFieldToTab(
                 'Root.Instagram',
-                TextField::create('InstagramAppID', _t(__CLASS__ . '.InstagramAppID', 'Instagram App ID'))
+                TextField::create('InstagramAppID', _t(__CLASS__ . '.InstagramAppID', 'Meta app ID'))
                     ->setDescription(_t(
                         __CLASS__ . '.InstagramAppIDDescription',
-                        'You can get a App ID from developers.facebook.com'
+                        'The app ID at the top of your app on developers.facebook.com'
                     ))
             );
         }
@@ -48,10 +49,21 @@ class SiteConfigExtension extends Extension
             $fields->addFieldToTab(
                 'Root.Instagram',
                 // write-only: the stored secret is never sent back to the browser
-                PasswordField::create('InstagramAppSecret', _t(__CLASS__ . '.InstagramAppSecret', 'Instagram App Secret'))
+                PasswordField::create('InstagramAppSecret', _t(__CLASS__ . '.InstagramAppSecret', 'Meta app secret'))
                     ->setDescription(_t(
                         __CLASS__ . '.InstagramAppSecretDescription',
-                        'You can get a App Secret from developers.facebook.com'
+                        'App settings > Basic > App secret on developers.facebook.com'
+                    ))
+            );
+        }
+
+        if (!Environment::getEnv('INSTAGRAM_CONFIG_ID') && !InstagramClient::config()->get('config_id')) {
+            $fields->addFieldToTab(
+                'Root.Instagram',
+                TextField::create('InstagramConfigID', _t(__CLASS__ . '.InstagramConfigID', 'Login configuration ID'))
+                    ->setDescription(_t(
+                        __CLASS__ . '.InstagramConfigIDDescription',
+                        'Facebook Login for Business > Configurations (system-user token, asset Instagram accounts, permission instagram_basic)'
                     ))
             );
         }

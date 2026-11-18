@@ -27,6 +27,7 @@ use Exception;
  * @property string InstagramAccessTokenExpirers
  * @property string InstagramID
  * @property string InstagramUserName
+ * @property string InstagramStatus
  *
  * @property Member|MemberExtension owner
  */
@@ -37,6 +38,8 @@ class MemberExtension extends Extension
         'InstagramAccessTokenExpirers' => 'Datetime',
         'InstagramID' => 'Varchar',
         'InstagramUserName' => 'Varchar',
+        // result of the last import, shown on the Instagram tab (e.g. a lost connection)
+        'InstagramStatus' => 'Varchar(255)',
     ];
 
     protected function updateCMSFields(FieldList $fields)
@@ -46,6 +49,7 @@ class MemberExtension extends Extension
             'InstagramAccessTokenExpirers',
             'InstagramID',
             'InstagramUserName',
+            'InstagramStatus',
             'InstagramProfilePicture',
             'InstagramFullName'
         ]);
@@ -70,14 +74,16 @@ class MemberExtension extends Extension
                 TextField::create('InstagramAccessToken', _t(__CLASS__ . '.InstagramAccessToken', 'Or add a generated acccess token'))
                     ->setDescription(_t(
                         __CLASS__ . 'InstagramAccessTokenDescription',
-                        'You can generate access tokens for test users of your app. <a href="{read_more_link}" target="_blank">more information</a>',
+                        'Generated in your Meta app under Use cases > Instagram API > API setup with Unified login > Generate access tokens (Instagram testers only). <a href="{read_more_link}" target="_blank" rel="noopener noreferrer">More information</a>',
                         null,
-                        ['read_more_link' => 'https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login']
+                        ['read_more_link' => 'https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started']
                     ))
             ]);
         } else {
             $fields->addFieldsToTab('Root.Instagram', array(
                 ReadonlyField::create('InstagramUserName', _t(__CLASS__ . '.InstagramUserName', 'Connected to IG account')),
+                ReadonlyField::create('InstagramStatus', _t(__CLASS__ . '.InstagramStatus', 'Last import'))
+                    ->setValue($this->getOwner()->InstagramStatus ?: _t(__CLASS__ . '.InstagramStatusNone', 'Not run yet')),
                 RevokeButton::create('InstagramRevokeButton', $this->getOwner()->ID)
             ));
         }
@@ -99,6 +105,7 @@ class MemberExtension extends Extension
             'state' => [_t(__CLASS__ . '.MsgState', 'The request expired or was not started here, please try again'), false],
             'nocode' => [_t(__CLASS__ . '.MsgNoCode', 'Did not receive a valid auth code'), false],
             'notoken' => [_t(__CLASS__ . '.MsgNoToken', 'Could not get an access token from Instagram'), false],
+            'noaccount' => [_t(__CLASS__ . '.MsgNoAccount', 'No Instagram account was shared with the site. Connect again and select your Instagram account'), false],
             'failed' => [_t(__CLASS__ . '.MsgFailed', 'Instagram authentication failed, see the error log'), false],
             'savefailed' => [_t(__CLASS__ . '.MsgSaveFailed', 'Failed to save the member'), false],
         ];
@@ -109,14 +116,11 @@ class MemberExtension extends Extension
         // update user date here to also support set generated tokens
         if ($this->getOwner()->isChanged('InstagramAccessToken') && !empty($this->getOwner()->InstagramAccessToken)) {
             try {
-                $client = new InstagramClient($this->getOwner()->InstagramAccessToken);
-                $response = $client->getUser();
-                $user = json_decode($response->getBody()->getContents());
-                if (!empty($user)) {
+                $account = (new InstagramClient($this->getOwner()->InstagramAccessToken))->getInstagramAccount();
+                if ($account) {
                     // SS6 validates Varchar fields: the API returns the id as a number
-                    $id = $user->user_id ?? $user->id ?? null;
-                    $this->getOwner()->InstagramID = $id === null ? null : (string) $id;
-                    $this->getOwner()->InstagramUserName = isset($user->username) ? (string) $user->username : null;
+                    $this->getOwner()->InstagramID = isset($account->id) ? (string) $account->id : null;
+                    $this->getOwner()->InstagramUserName = isset($account->username) ? (string) $account->username : null;
                 }
             } catch (Exception $e) {
                 // soft error ?

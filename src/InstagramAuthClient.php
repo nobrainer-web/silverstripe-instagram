@@ -9,7 +9,7 @@ use SilverStripe\Control\Director;
 
 class InstagramAuthClient
 {
-    const AUTH_URL = 'https://api.instagram.com/oauth/';
+    const AUTH_URL = 'https://graph.facebook.com/';
 
     /**
      * @var Client
@@ -22,10 +22,7 @@ class InstagramAuthClient
     public function __construct()
     {
         $this->client = new Client([
-            'base_uri' => self::AUTH_URL,
-            'headers' => [
-                'Content-Type' => 'application/x-www-form-urlencoded'
-            ]
+            'base_uri' => self::AUTH_URL . InstagramClient::config()->get('api_version') . '/',
         ]);
     }
 
@@ -45,11 +42,11 @@ class InstagramAuthClient
             throw new RuntimeException('No app secret configured, set this in your config under Broarm\Instagram\InstagramClient.app_secret of in the DB trough site config');
         }
 
-        return $this->client->post('access_token', [
-            'form_params' => [
+        // Meta app ID and secret (Unified login; the old Instagram Login used a separate Instagram app ID/secret)
+        return $this->client->get('oauth/access_token', [
+            'query' => [
                 'client_id' => $appId,
                 'client_secret' => $appSecret,
-                'grant_type' => 'authorization_code',
                 'redirect_uri' => Director::absoluteURL(CallbackController::REDIRECT_URL),
                 'code' => $code
             ]

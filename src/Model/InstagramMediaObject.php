@@ -129,8 +129,10 @@ class InstagramMediaObject extends Image
         }
 
         $folder = Folder::find_or_make($this->uploadFolder());
-        $this->setFromStream($response->getBody()->detach(), $fileName);
+        // the folder path must be part of the file name: SS6 doesn't move the file when ParentID changes afterwards
+        // (the file landed in the assets root while the CMS showed it in instagram/<account>)
         $this->ParentID = $folder->ID;
+        $this->setFromStream($response->getBody()->detach(), $folder->getFilename() . $fileName);
         $this->OwnerID = $this->findOwnerID();
     }
 

@@ -43,8 +43,9 @@ class InstagramAuthClient
         }
 
         // Meta app ID and secret (Unified login; the old Instagram Login used a separate Instagram app ID/secret)
-        return $this->client->get('oauth/access_token', [
-            'query' => [
+        // POST: the app secret travels in the body, not in a URL that proxies or access logs may record
+        return $this->client->post('oauth/access_token', [
+            'form_params' => [
                 'client_id' => $appId,
                 'client_secret' => $appSecret,
                 'redirect_uri' => Director::absoluteURL(CallbackController::REDIRECT_URL),

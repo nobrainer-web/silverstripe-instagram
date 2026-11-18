@@ -75,6 +75,16 @@ class CallbackController extends Controller
             return $this->redirectWithMessage('notallowed');
         }
 
+        // the token never expires: also ask Meta to drop the access, so old backups or copies of the database hold nothing usable
+        if ($member->InstagramAccessToken) {
+            try {
+                $revoked = (new InstagramClient($member->InstagramAccessToken))->revokeAccess();
+                ImportMediaTasks::log('Instagram access revoked at Meta for member ' . $member->ID . ': ' . ($revoked ? 'yes' : 'no'));
+            } catch (Exception $e) {
+                ImportMediaTasks::log('Instagram revoke at Meta failed for member ' . $member->ID . ': ' . InstagramClient::errorSummary($e), 'warning');
+            }
+        }
+
         $member->update([
             'InstagramAccessToken' => null,
             'InstagramAccessTokenExpirers' => null,
@@ -99,7 +109,8 @@ class CallbackController extends Controller
         if (!$request->getVar('samesite')) {
             $query = array_intersect_key($request->getVars(), array_flip(['code', 'state', 'error', 'error_reason', 'error_description']));
             $query['samesite'] = 1;
-            $url = Convert::raw2att(Director::absoluteURL(self::REDIRECT_URL) . '?' . http_build_query($query));
+            // relative: never depends on the request's Host header
+            $url = Convert::raw2att(rtrim(self::REDIRECT_URL, '/') . '/?' . http_build_query($query));
             return HTTPResponse::create("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=$url\"><title>Instagram</title><a href=\"$url\">Continue</a>")
                 ->addHeader('Content-Type', 'text/html; charset=utf-8')
                 ->addHeader('Cache-Control', 'no-store')

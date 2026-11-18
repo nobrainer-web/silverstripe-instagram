@@ -76,8 +76,30 @@ class InstagramClient
 
         $this->client = new Client([
             'base_uri' => self::API_URL . self::config()->get('api_version') . '/',
-            'handler' => $handler
+            'handler' => $handler,
+            // Graph API JSON endpoints don't redirect; never follow one with the token attached
+            'allow_redirects' => false,
         ]);
+    }
+
+    /**
+     * Ask Meta to drop the app's access for this token (best effort, used on disconnect).
+     * Full removal: the client removes the app under Business Settings > Integrations > Connected apps.
+     */
+    public function revokeAccess(): bool
+    {
+        $response = json_decode($this->client->delete('me/permissions')->getBody()->getContents());
+        return !empty($response->success);
+    }
+
+    /**
+     * Instagram/media IDs are numeric; anything else could turn the request path into another URL
+     */
+    protected static function assertID(string $id): void
+    {
+        if (!ctype_digit($id)) {
+            throw new \InvalidArgumentException('Invalid Instagram ID');
+        }
     }
 
     /**
@@ -136,6 +158,7 @@ class InstagramClient
      */
     public function getUserMedia(string $id)
     {
+        self::assertID($id);
         return $this->client->get("$id/media", [
             'query' => [
                 'fields' => implode(',', [
@@ -154,6 +177,7 @@ class InstagramClient
 
     public function getMedia($id)
     {
+        self::assertID((string) $id);
         return $this->client->get($id, [
             'query' => [
                 'fields' => implode(',', [

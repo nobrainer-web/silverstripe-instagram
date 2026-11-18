@@ -37,6 +37,7 @@ INSTAGRAM_CONFIG_ID="<login configuration ID>"
 ```
 
 Or in YAML (`Broarm\Instagram\InstagramClient`: `app_id`, `app_secret`, `config_id`), or in the CMS under *Settings > Instagram* (the fields only show when the value isn't set in `.env` or YAML; the secret field is write-only).
+On a live site set all three in `.env`: then CMS editors can't point the connection at another Meta app or configuration.
 
 ## Connect
 
@@ -58,12 +59,17 @@ The tab shows the result of the last import ("Last import"). If it reports error
 
 The daily import also keeps the Meta app active.
 
+## Security notes
+
+- The token never expires and is stored in `Member.InstagramAccessToken`. Treat database backups and copies as holding a live credential: clear the column in anonymised copies.
+- **Disconnect** asks Meta to drop the access; to be sure it's gone, the account owner removes the app under *Business Settings > Integrations > Connected apps* of their business portfolio.
+
 ## Endpoints
 
 | URL | Purpose |
 |---|---|
 | `/instagram/authenticate/` | OAuth redirect target (CMS login required). Bounces once through a same-site page, because SS6 session cookies are `SameSite=Strict` and are not sent on the redirect back from Meta. |
-| `/instagram/revoke/<memberID>` | Disconnect (CMS login + security token; own member or security admin) |
+| `/instagram/revoke/<memberID>` | Disconnect (CMS login + security token; own member or security admin). Also asks Meta to drop the access (`DELETE me/permissions`, best effort). |
 | `/instagram/deauthorize/`, `/instagram/deletedata/` | Meta callbacks; acknowledge with `[]` |
 
 ## API
